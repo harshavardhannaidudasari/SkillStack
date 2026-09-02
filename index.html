@@ -122,6 +122,14 @@
   .brand:hover .brand-mark{ transform:rotateY(360deg) rotateX(10deg); }
   .brand-name{font-family:'Sora';font-weight:700;font-size:1.05rem;}
   .brand-sub{font-size:.68rem;color:var(--text-faint);margin-top:1px;}
+  .topnav{display:flex; align-items:center; gap:4px; margin-left:10px;}
+  .topnav-link{
+    border:1px solid transparent; background:none; color:var(--text-dim);
+    font-size:.82rem; font-weight:500; padding:8px 12px; border-radius:999px; cursor:pointer;
+    white-space:nowrap;
+  }
+  .topnav-link:hover{color:var(--text); background:var(--surface-2);}
+  .topnav-link.active{color:var(--text); background:var(--surface-2); border-color:var(--border); font-weight:600;}
   .topbar-spacer{flex:1;}
   .topstat{
     display:flex; align-items:center; gap:8px;
@@ -347,11 +355,46 @@
   .result-msg.ok{color:var(--accent-2);}
   .result-msg.no{color:var(--danger);}
 
+  /* ---------- Course Map / Campus Tour / Progress (3D views) ---------- */
+  .view-wrap{max-width:1040px; margin:0 auto; padding:28px 24px 80px;}
+  .view-wrap h1{font-size:1.6rem; margin-bottom:6px;}
+  .view-wrap .lede{color:var(--text-dim); font-size:.95rem; max-width:64ch; margin-bottom:20px;}
+  .stage-3d{
+    position:relative; width:100%; height:58vh; min-height:400px; max-height:560px;
+    border-radius:var(--radius-lg); overflow:hidden; border:1px solid var(--border);
+    background:radial-gradient(circle at 50% 30%, var(--surface-2), var(--bg) 78%);
+    box-shadow:var(--shadow);
+  }
+  .stage-3d.tall{height:66vh; max-height:640px;}
+  .stage-3d canvas{width:100%; height:100%; display:block; cursor:grab; touch-action:none;}
+  .stage-3d canvas.dragging{cursor:grabbing;}
+  .stage-hint{
+    position:absolute; left:14px; bottom:14px; z-index:2; pointer-events:none;
+    font-size:.74rem; color:var(--text-faint); background:color-mix(in srgb, var(--surface) 78%, transparent);
+    border:1px solid var(--border); border-radius:999px; padding:6px 12px; backdrop-filter:blur(6px);
+  }
+  .stage-labels{position:absolute; inset:0; z-index:1; pointer-events:none;}
+  .map-label{
+    position:absolute; transform:translate(-50%,-130%);
+    font-family:'IBM Plex Mono'; font-size:.68rem; font-weight:600; color:var(--text);
+    background:color-mix(in srgb, var(--surface) 82%, transparent); border:1px solid var(--border);
+    border-radius:6px; padding:2px 7px; white-space:nowrap;
+  }
+  .map-label.locked{color:var(--text-faint); opacity:.75;}
+  .map-label.complete{color:var(--accent-2); border-color:color-mix(in srgb, var(--accent-2) 50%, var(--border));}
+
   @media (max-width:880px){
     .hero{grid-template-columns:1fr;}
     .course-shell{grid-template-columns:1fr;}
     .sidebar{position:static; height:auto; border-right:none; border-bottom:1px solid var(--border);}
     .content-pane{padding:26px 18px 70px;}
+    .stage-3d, .stage-3d.tall{height:52vh; min-height:320px;}
+    .view-wrap{padding:22px 16px 60px;}
+  }
+  @media (max-width:760px){
+    .topnav{margin-left:0; order:3; width:100%; justify-content:flex-start; overflow-x:auto; padding-top:4px;}
+    .topbar{flex-wrap:wrap; row-gap:6px;}
+    .topbar-spacer{display:none;}
   }
 
   [hidden]{display:none!important;}
@@ -368,6 +411,11 @@
         <div class="brand-sub">Learn &middot; Watch &middot; Practice</div>
       </span>
     </button>
+    <nav class="topnav" id="topNav">
+      <button class="topnav-link" data-route="#/map">🗺️ Course Map</button>
+      <button class="topnav-link" data-route="#/campus">🏛️ Campus Tour</button>
+      <button class="topnav-link" data-route="#/progress">📊 Progress</button>
+    </nav>
     <div class="topbar-spacer"></div>
     <div class="topstat" id="overallStat" title="Topics you've completed across all courses">
       <svg class="ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5" fill="none" stroke="var(--surface-3)" stroke-width="4"/><circle id="ringFill" cx="18" cy="18" r="15.5" fill="none" stroke="var(--accent-2)" stroke-width="4" stroke-linecap="round" stroke-dasharray="97.4" stroke-dashoffset="97.4" transform="rotate(-90 18 18)"/></svg>
@@ -1007,11 +1055,17 @@ function parseHash(){
       return {view:'course', course, ti};
     }
   }
+  if(parts[0]==='map') return {view:'map'};
+  if(parts[0]==='campus') return {view:'campus'};
+  if(parts[0]==='progress') return {view:'progress'};
   return {view:'home'};
 }
 window.addEventListener('hashchange', render);
 document.getElementById('brandBtn').addEventListener('click', ()=>{ location.hash = '#/'; });
 document.getElementById('themeBtn').addEventListener('click', toggleTheme);
+document.querySelectorAll('.topnav-link').forEach(btn=>{
+  btn.addEventListener('click', ()=>{ location.hash = btn.dataset.route; });
+});
 
 /* ============ RENDER: HOME ============ */
 function escapeHtml(s){
@@ -1235,17 +1289,668 @@ function renderTopicContent(course, ti){
   });
 }
 
+/* ============ SHARED 3D VIEW HELPERS ============
+   Used by the Course Map, Campus Tour, and Progress views below. Home's
+   hero scene (above) predates this and is left exactly as-is since it
+   already works — no reason to risk touching tested code for the sake of
+   sharing a helper. */
+let activeView3D = null;
+function disposeActiveView3D(){
+  if(activeView3D){ activeView3D.dispose(); activeView3D = null; }
+}
+// Projects a 3D point to CSS pixel coordinates within `canvas`, for
+// positioning an HTML label over a Three.js scene (crisper and far simpler
+// than building real 3D text geometry for this many short labels).
+function project3D(vec3, camera, canvas){
+  const v = vec3.clone().project(camera);
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (v.x*0.5+0.5) * rect.width,
+    y: (1-(v.y*0.5+0.5)) * rect.height,
+    behind: v.z > 1
+  };
+}
+
+/* ============ RENDER: COURSE MAP ============
+   A gamified 3D checkpoint path: one node per course, strung along a curve,
+   styled by progress (locked/in-progress/complete). Nothing is actually
+   access-gated — SkillStack stays self-paced/click-anywhere like the rest
+   of the site — the checkpoint styling is purely a visual "how far along
+   am I" cue, same information the home grid's progress bars already show. */
+function renderMap(){
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="view-wrap">
+      <button class="back-link" id="mapBackBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg> All courses</button>
+      <h1>Course Map</h1>
+      <p class="lede">Every course as a checkpoint along the path — lit once you've started, filled in once it's done. Drag to look around, click a checkpoint to jump in.</p>
+      <div class="stage-3d" id="mapStage">
+        <canvas id="mapCanvas"></canvas>
+        <div class="stage-labels" id="mapLabels"></div>
+        <div class="stage-hint">🖱️ Drag to orbit · Click a checkpoint to open it</div>
+      </div>
+    </div>
+  `;
+  document.getElementById('mapBackBtn').addEventListener('click', ()=>{ location.hash = '#/'; });
+  initMapScene();
+}
+
+function initMapScene(){
+  const canvas = document.getElementById('mapCanvas');
+  const labelLayer = document.getElementById('mapLabels');
+  if(!canvas || typeof THREE === 'undefined') return;
+  let renderer;
+  try{ renderer = new THREE.WebGLRenderer({canvas, alpha:true, antialias:true}); }
+  catch(e){ return; }
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
+  camera.position.set(0, 5, 13);
+  camera.lookAt(0,0,0);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+  dir.position.set(5,8,6);
+  scene.add(dir);
+
+  const group = new THREE.Group();
+  scene.add(group);
+
+  // A winding S-curve through 3D space, one control point per course.
+  const n = COURSES.length;
+  const points = COURSES.map((c,i)=>{
+    const t = i/(n-1);
+    return new THREE.Vector3(
+      (t-0.5) * 15,
+      Math.sin(t*Math.PI*2.2) * 1.4,
+      Math.cos(t*Math.PI*1.6) * 3.2
+    );
+  });
+  const curve = new THREE.CatmullRomCurve3(points);
+
+  const pathGeom = new THREE.TubeGeometry(curve, 200, 0.05, 8, false);
+  const pathMat = new THREE.MeshStandardMaterial({color:0x8892b0, roughness:0.6, transparent:true, opacity:0.55});
+  group.add(new THREE.Mesh(pathGeom, pathMat));
+
+  const nodes = COURSES.map((c,i)=>{
+    const done = courseDoneCount(c);
+    const pct = done/c.topics.length;
+    const color = hslToHexNum(c.hue, 70, 55);
+    const state = pct>=1 ? 'complete' : pct>0 ? 'progress' : 'locked';
+    const mat = new THREE.MeshStandardMaterial({
+      color: state==='locked' ? 0x475066 : color,
+      roughness:0.35, metalness:0.2,
+      transparent: state==='locked', opacity: state==='locked' ? 0.55 : 1,
+      emissive: state==='locked' ? 0x000000 : color,
+      emissiveIntensity: state==='complete' ? 0.55 : state==='progress' ? 0.22 : 0,
+    });
+    const mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(state==='locked'?0.38:0.5, 0), mat);
+    mesh.position.copy(points[i]);
+    mesh.userData = {course:c, state, baseScale: state==='locked'?0.38:0.5, phase:Math.random()*Math.PI*2};
+    group.add(mesh);
+    return mesh;
+  });
+
+  let dragging=false, lastX=0, lastY=0, dragVelX=0, dragVelY=0, movedSinceDown=0;
+  canvas.classList.add('grabbable');
+  function onPointerDown(e){
+    dragging=true; lastX=e.clientX; lastY=e.clientY; dragVelX=0; dragVelY=0; movedSinceDown=0;
+    canvas.classList.add('dragging');
+    try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
+  }
+  function onPointerMove(e){
+    if(!dragging) return;
+    const dx=e.clientX-lastX, dy=e.clientY-lastY;
+    lastX=e.clientX; lastY=e.clientY;
+    movedSinceDown += Math.abs(dx)+Math.abs(dy);
+    dragVelY = dx*0.006; dragVelX = dy*0.006;
+    group.rotation.y += dragVelY;
+    group.rotation.x = Math.max(-0.4, Math.min(0.4, group.rotation.x + dragVelX));
+  }
+  function onPointerUp(e){
+    dragging=false;
+    canvas.classList.remove('dragging');
+    // A near-stationary pointerdown+up is treated as a click, not a drag.
+    if(movedSinceDown < 6) handleClick(e);
+  }
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  function handleClick(e){
+    const rect = canvas.getBoundingClientRect();
+    ndc.x = ((e.clientX-rect.left)/rect.width)*2-1;
+    ndc.y = -((e.clientY-rect.top)/rect.height)*2+1;
+    raycaster.setFromCamera(ndc, camera);
+    const hit = raycaster.intersectObjects(nodes)[0];
+    if(hit) location.hash = `#/course/${hit.object.userData.course.id}/topic/0`;
+  }
+
+  function resize(){
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.max(rect.width,1), h = Math.max(rect.height,1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+    renderer.setSize(w,h,false);
+    camera.aspect = w/h;
+    camera.updateProjectionMatrix();
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  const _worldPos = new THREE.Vector3();
+  function renderLabels(){
+    labelLayer.innerHTML = nodes.map(mesh=>{
+      // mesh.position is local to `group`, which the drag-to-orbit handler
+      // rotates — project the *world* position (getWorldPosition applies
+      // the group's current matrixWorld) or labels drift away from their
+      // nodes as soon as the scene is rotated. Confirmed live: without
+      // this, dragging the map desynced every label from its checkpoint.
+      mesh.getWorldPosition(_worldPos);
+      const p = project3D(_worldPos, camera, canvas);
+      if(p.behind) return '';
+      const c = mesh.userData.course;
+      const cls = mesh.userData.state;
+      return `<div class="map-label ${cls}" style="left:${p.x}px; top:${p.y}px;">${escapeHtml(c.code)}</div>`;
+    }).join('');
+  }
+
+  const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const clock = new THREE.Clock();
+  let raf = null;
+  function tick(){
+    const t = clock.getElapsedTime();
+    nodes.forEach(m=>{
+      const pulse = m.userData.state==='progress' ? 1 + Math.sin(t*2 + m.userData.phase)*0.08 : 1;
+      m.scale.setScalar(m.userData.baseScale * pulse);
+      m.rotation.y += 0.01;
+    });
+    // Drag-only rotation here, deliberately no idle auto-spin (unlike the
+    // decorative home hero) — this view exists to be clicked precisely,
+    // and a moving target under the cursor actively hurts that.
+    if(!dragging){ dragVelY*=0.9; dragVelX*=0.9; group.rotation.y += dragVelY; group.rotation.x += dragVelX; }
+    renderer.render(scene, camera);
+    renderLabels();
+    raf = requestAnimationFrame(tick);
+  }
+  if(reduceMotion){ renderer.render(scene, camera); renderLabels(); } else { tick(); }
+
+  activeView3D = {
+    dispose(){
+      if(raf) cancelAnimationFrame(raf);
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('pointerup', onPointerUp);
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointermove', onPointerMove);
+      nodes.forEach(m=>{ m.geometry.dispose(); m.material.dispose(); });
+      pathGeom.dispose(); pathMat.dispose();
+      renderer.dispose();
+    }
+  };
+}
+
+/* ============ RENDER: CAMPUS TOUR ============
+   A stylized, procedurally-built library room — not a photorealistic
+   asset (this session can't source/produce 3D models), but a genuinely
+   walkable space: click to lock the pointer for mouse-look, WASD/arrows to
+   move, Escape to release. */
+function renderCampus(){
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="view-wrap">
+      <button class="back-link" id="campusBackBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg> All courses</button>
+      <h1>Virtual Campus — Library</h1>
+      <p class="lede">A quick look inside. Click the scene to look around, then use WASD or the arrow keys to walk.</p>
+      <div class="stage-3d tall" id="campusStage">
+        <canvas id="campusCanvas"></canvas>
+        <div class="stage-hint" id="campusHint">🖱️ Click to look around · WASD / arrows to walk · Esc to release</div>
+      </div>
+    </div>
+  `;
+  document.getElementById('campusBackBtn').addEventListener('click', ()=>{ location.hash = '#/'; });
+  initCampusScene();
+}
+
+function initCampusScene(){
+  const canvas = document.getElementById('campusCanvas');
+  const hint = document.getElementById('campusHint');
+  if(!canvas || typeof THREE === 'undefined') return;
+  let renderer;
+  try{ renderer = new THREE.WebGLRenderer({canvas, antialias:true}); }
+  catch(e){ return; }
+  renderer.shadowMap.enabled = false;
+
+  const ROOM_W = 22, ROOM_D = 16, ROOM_H = 5.5;
+  const scene = new THREE.Scene();
+  const bgColor = 0x1a1f30;
+  scene.background = new THREE.Color(bgColor);
+  scene.fog = new THREE.Fog(bgColor, 8, 26);
+
+  const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 100);
+  camera.position.set(0, 1.65, ROOM_D/2 - 2);
+  // Three.js's default camera forward is -Z, so yaw=0 already faces into
+  // the room from this spawn point near the +Z wall — confirmed live that
+  // yaw=Math.PI (the first attempt) instead faced the camera at the wall
+  // two units behind its own spawn point, filling the view with a
+  // close-up of the wall texture.
+  let yaw = 0, pitch = 0;
+
+  scene.add(new THREE.AmbientLight(0xfff2df, 0.55));
+  const lampPositions = [[-6,-4],[6,-4],[-6,4],[6,4],[0,0]];
+  const lamps = lampPositions.map(([x,z])=>{
+    const l = new THREE.PointLight(0xffd9a0, 1.1, 12, 2);
+    l.position.set(x, ROOM_H-0.6, z);
+    scene.add(l);
+    return l;
+  });
+
+  const floorMat = new THREE.MeshStandardMaterial({color:0x5b4632, roughness:0.85});
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), floorMat);
+  floor.rotation.x = -Math.PI/2;
+  scene.add(floor);
+
+  const ceilMat = new THREE.MeshStandardMaterial({color:0x22283a, roughness:1});
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), ceilMat);
+  ceiling.rotation.x = Math.PI/2;
+  ceiling.position.y = ROOM_H;
+  scene.add(ceiling);
+
+  const wallMat = new THREE.MeshStandardMaterial({color:0x3a2f22, roughness:0.9});
+  const walls = [
+    {w:ROOM_W, h:ROOM_H, pos:[0,ROOM_H/2,-ROOM_D/2], rot:[0,0,0]},
+    {w:ROOM_W, h:ROOM_H, pos:[0,ROOM_H/2, ROOM_D/2], rot:[0,Math.PI,0]},
+    {w:ROOM_D, h:ROOM_H, pos:[-ROOM_W/2,ROOM_H/2,0], rot:[0,Math.PI/2,0]},
+    {w:ROOM_D, h:ROOM_H, pos:[ ROOM_W/2,ROOM_H/2,0], rot:[0,-Math.PI/2,0]},
+  ];
+  walls.forEach(w=>{
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w.w,w.h), wallMat);
+    mesh.position.set(...w.pos);
+    mesh.rotation.set(...w.rot);
+    scene.add(mesh);
+  });
+
+  // Bookshelves: rows of shelf frames, each stacked with small "book" boxes
+  // colored from the same course hues used everywhere else on the site.
+  const shelfGroup = new THREE.Group();
+  const frameMat = new THREE.MeshStandardMaterial({color:0x2c2013, roughness:0.7});
+  function buildShelf(x, z, rotY){
+    const g = new THREE.Group();
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.6, 0.5), frameMat);
+    frame.position.y = 1.3;
+    g.add(frame);
+    for(let row=0; row<3; row++){
+      for(let i=0; i<10; i++){
+        const hue = HERO_HUES[(row*10+i) % HERO_HUES.length];
+        const book = new THREE.Mesh(
+          new THREE.BoxGeometry(0.24, 0.55 + (i%3)*0.08, 0.34),
+          new THREE.MeshStandardMaterial({color: hslToHexNum(hue,55,45), roughness:0.6})
+        );
+        // Frame is 0.5 deep (±0.25 locally) — push books out past its
+        // front face (0.25) plus their own half-depth (0.17) so they sit
+        // visibly in front of it instead of z-fighting/hiding inside its
+        // solid volume, confirmed live as a wall of flat brown boxes with
+        // no visible book stripes before this fix.
+        book.position.set(-1.35 + i*0.3, 0.55 + row*0.78, 0.42);
+        g.add(book);
+      }
+    }
+    g.position.set(x, 0, z);
+    g.rotation.y = rotY;
+    return g;
+  }
+  // Shelves line the left/right walls (x=-8/x=+8); their books face along
+  // the shelf's local +Z, so they need a 90° turn to face the center
+  // aisle (+X from the left wall, -X from the right) rather than along
+  // the wall itself — confirmed live as the first version facing shelves
+  // toward each other lengthwise instead of out into the room.
+  const shelfRows = [
+    [-8,-5,Math.PI/2], [-8,0,Math.PI/2], [-8,5,Math.PI/2],
+    [8,-5,-Math.PI/2], [8,0,-Math.PI/2], [8,5,-Math.PI/2],
+  ];
+  shelfRows.forEach(([x,z,r])=>shelfGroup.add(buildShelf(x,z,r)));
+  scene.add(shelfGroup);
+
+  // A reading table in the middle of the room.
+  const tableMat = new THREE.MeshStandardMaterial({color:0x4a3521, roughness:0.6});
+  const table = new THREE.Mesh(new THREE.BoxGeometry(3, 0.12, 1.4), tableMat);
+  table.position.set(0, 0.9, 1);
+  scene.add(table);
+  [[-1.3,-0.6],[1.3,-0.6],[-1.3,0.6],[1.3,0.6]].forEach(([x,z])=>{
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12,0.9,0.12), tableMat);
+    leg.position.set(x, 0.45, 1+z);
+    scene.add(leg);
+  });
+
+  // --- Look (pointer lock) + move (WASD) controls ---
+  const keys = Object.create(null);
+  function onKeyDown(e){ keys[e.code]=true; if(e.code==='Escape') document.exitPointerLock && document.exitPointerLock(); }
+  function onKeyUp(e){ keys[e.code]=false; }
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+
+  function onClickCanvas(){
+    if(!canvas.requestPointerLock) return;
+    // requestPointerLock() returns a promise (in browsers new enough to
+    // return one at all) that rejects when the browser/embedding context
+    // blocks it — confirmed live as an unhandled-rejection console
+    // exception without this catch. WASD movement doesn't depend on
+    // pointer lock at all, and the touch-drag fallback below still
+    // provides look control, so a rejection here just means the user
+    // keeps whatever look control they already had.
+    const result = canvas.requestPointerLock();
+    if(result && result.catch) result.catch(()=>{});
+  }
+  canvas.addEventListener('click', onClickCanvas);
+
+  function onPointerLockChange(){
+    const locked = document.pointerLockElement === canvas;
+    hint.textContent = locked
+      ? '🖱️ Mouse-look active · WASD / arrows to walk · Esc to release'
+      : '🖱️ Click to look around · WASD / arrows to walk · Esc to release';
+  }
+  document.addEventListener('pointerlockchange', onPointerLockChange);
+
+  function onMouseMoveLocked(e){
+    if(document.pointerLockElement !== canvas) return;
+    yaw -= e.movementX * 0.0025;
+    pitch -= e.movementY * 0.0025;
+    pitch = Math.max(-1.1, Math.min(1.1, pitch));
+  }
+  document.addEventListener('mousemove', onMouseMoveLocked);
+
+  // Touch/mobile fallback: drag to look, since pointer lock isn't
+  // reliably available on touch devices.
+  let touching=false, lastTX=0, lastTY=0;
+  function onTouchStart(e){ touching=true; const t=e.touches[0]; lastTX=t.clientX; lastTY=t.clientY; }
+  function onTouchMove(e){
+    if(!touching) return;
+    const t=e.touches[0];
+    yaw -= (t.clientX-lastTX)*0.004;
+    pitch -= (t.clientY-lastTY)*0.004;
+    pitch = Math.max(-1.1, Math.min(1.1, pitch));
+    lastTX=t.clientX; lastTY=t.clientY;
+    e.preventDefault();
+  }
+  function onTouchEnd(){ touching=false; }
+  canvas.addEventListener('touchstart', onTouchStart, {passive:true});
+  canvas.addEventListener('touchmove', onTouchMove, {passive:false});
+  canvas.addEventListener('touchend', onTouchEnd);
+
+  function resize(){
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.max(rect.width,1), h = Math.max(rect.height,1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+    renderer.setSize(w,h,false);
+    camera.aspect = w/h;
+    camera.updateProjectionMatrix();
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  const BOUND = 0.9; // stay just inside the walls
+  const clock = new THREE.Clock();
+  let raf = null;
+  function tick(){
+    const dt = Math.min(clock.getDelta(), 0.05);
+    const speed = 4.2;
+    const forward = (keys['KeyW']||keys['ArrowUp']?1:0) - (keys['KeyS']||keys['ArrowDown']?1:0);
+    const strafe = (keys['KeyD']||keys['ArrowRight']?1:0) - (keys['KeyA']||keys['ArrowLeft']?1:0);
+    if(forward || strafe){
+      // World-space forward for yaw-only rotation is (-sin(yaw), 0,
+      // -cos(yaw)) (Three's camera forward is -Z), right is (cos(yaw), 0,
+      // -sin(yaw)) — confirmed live that the first version had the forward
+      // term's sign flipped on both axes, so W walked the camera backward
+      // through the wall behind it instead of into the room.
+      const dx = -Math.sin(yaw)*forward + Math.cos(yaw)*strafe;
+      const dz = -Math.cos(yaw)*forward - Math.sin(yaw)*strafe;
+      camera.position.x += dx*speed*dt;
+      camera.position.z += dz*speed*dt;
+      camera.position.x = Math.max(-ROOM_W/2+BOUND, Math.min(ROOM_W/2-BOUND, camera.position.x));
+      camera.position.z = Math.max(-ROOM_D/2+BOUND, Math.min(ROOM_D/2-BOUND, camera.position.z));
+    }
+    camera.rotation.set(0,0,0);
+    camera.rotation.order = 'YXZ';
+    camera.rotation.y = yaw;
+    camera.rotation.x = pitch;
+    lamps.forEach((l,i)=>{ l.intensity = 1.1 + Math.sin(clock.getElapsedTime()*1.4 + i)*0.06; });
+    renderer.render(scene, camera);
+    raf = requestAnimationFrame(tick);
+  }
+  tick();
+
+  activeView3D = {
+    dispose(){
+      if(raf) cancelAnimationFrame(raf);
+      if(document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('resize', resize);
+      document.removeEventListener('pointerlockchange', onPointerLockChange);
+      document.removeEventListener('mousemove', onMouseMoveLocked);
+      canvas.removeEventListener('click', onClickCanvas);
+      canvas.removeEventListener('touchstart', onTouchStart);
+      canvas.removeEventListener('touchmove', onTouchMove);
+      canvas.removeEventListener('touchend', onTouchEnd);
+      scene.traverse(obj=>{
+        if(obj.geometry) obj.geometry.dispose();
+        if(obj.material) obj.material.dispose();
+      });
+      renderer.dispose();
+    }
+  };
+}
+
+/* ============ RENDER: PROGRESS (3D DATA VIZ) ============
+   Two spatial views of the same numbers already shown flatly on Home:
+   a 10x10 cube grid (one cube per topic, all 100 of them, lit up by
+   course color once done) and a row of per-course bars that grow in on
+   load. Numeric stat tiles sit alongside for anyone who wants exact
+   figures rather than reading them off a 3D shape. */
+function renderProgress(){
+  const main = document.getElementById('main');
+  const done = totalDoneCount();
+  main.innerHTML = `
+    <div class="view-wrap">
+      <button class="back-link" id="progressBackBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg> All courses</button>
+      <h1>Your Progress</h1>
+      <p class="lede">Every topic across every course, in one view. Each lit cube is one you've completed.</p>
+      <div class="stage-3d" id="progressStage">
+        <canvas id="progressCanvas"></canvas>
+        <div class="stage-labels" id="progressLabels"></div>
+        <div class="stage-hint">🖱️ Drag to orbit</div>
+      </div>
+      <div class="hero-stats" style="margin-top:22px;">
+        <div class="stat-tile"><div class="n">${done}/${TOTAL_TOPICS}</div><div class="l">Topics completed</div></div>
+        <div class="stat-tile"><div class="n">${((done/TOTAL_TOPICS)*100).toFixed(0)}%</div><div class="l">Overall progress</div></div>
+        <div class="stat-tile"><div class="n">${COURSES.filter(c=>courseDoneCount(c)>0).length}</div><div class="l">Courses started</div></div>
+        <div class="stat-tile"><div class="n">${COURSES.filter(c=>courseDoneCount(c)===c.topics.length).length}</div><div class="l">Courses completed</div></div>
+      </div>
+    </div>
+  `;
+  document.getElementById('progressBackBtn').addEventListener('click', ()=>{ location.hash = '#/'; });
+  initProgressScene();
+}
+
+function initProgressScene(){
+  const canvas = document.getElementById('progressCanvas');
+  const labelLayer = document.getElementById('progressLabels');
+  if(!canvas || typeof THREE === 'undefined') return;
+  let renderer;
+  try{ renderer = new THREE.WebGLRenderer({canvas, alpha:true, antialias:true}); }
+  catch(e){ return; }
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 100);
+  camera.position.set(0, 4, 14);
+  camera.lookAt(0,0.5,0);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+  dir.position.set(4,7,6);
+  scene.add(dir);
+
+  const group = new THREE.Group();
+  scene.add(group);
+
+  // Flattened, ordered list of every topic across every course.
+  const allTopics = [];
+  COURSES.forEach(c=>c.topics.forEach((t,i)=>allTopics.push({course:c, i})));
+
+  const GRID = 10; // 10x10 = 100 = TOTAL_TOPICS
+  const cubeGroup = new THREE.Group();
+  cubeGroup.position.set(0, 3.2, -1);
+  const cubeSize = 0.42, gap = 0.14;
+  const span = GRID*(cubeSize+gap);
+  const cubeMeshes = allTopics.map((entry, idx)=>{
+    const row = Math.floor(idx/GRID), col = idx%GRID;
+    const done = isDone(entry.course.id, entry.i);
+    const color = hslToHexNum(entry.course.hue, 65, 55);
+    const mat = new THREE.MeshStandardMaterial({
+      color: done ? color : 0x2a3148,
+      roughness:0.4, metalness:0.15,
+      transparent:true, opacity: done?1:0.35,
+      emissive: done?color:0x000000, emissiveIntensity: done?0.35:0,
+    });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(cubeSize,cubeSize,cubeSize), mat);
+    mesh.position.set(col*(cubeSize+gap) - span/2, -row*(cubeSize+gap) + span/2, 0);
+    mesh.userData = {phase: Math.random()*Math.PI*2};
+    cubeGroup.add(mesh);
+    return mesh;
+  });
+  group.add(cubeGroup);
+
+  // Per-course bars underneath the cube grid.
+  const barGroup = new THREE.Group();
+  barGroup.position.set(0, 0, 0);
+  const barW = 0.7, barGap = 0.28, maxH = 3, barGeomH = 0.02;
+  const barSpan = COURSES.length*(barW+barGap);
+  const bars = COURSES.map((c,i)=>{
+    const pct = courseDoneCount(c)/c.topics.length;
+    const color = hslToHexNum(c.hue, 65, 55);
+    const mat = new THREE.MeshStandardMaterial({color, roughness:0.35, metalness:0.15, emissive:color, emissiveIntensity:0.18});
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(barW, barGeomH, barW*0.6), mat);
+    const x = i*(barW+barGap) - barSpan/2 + barW/2;
+    mesh.position.set(x, 0.01, 0);
+    mesh.userData = {targetH: Math.max(0.02, pct*maxH), x, course:c};
+    barGroup.add(mesh);
+    return mesh;
+  });
+  group.add(barGroup);
+
+  const floorMat = new THREE.MeshStandardMaterial({color:0x1c2338, roughness:0.9, transparent:true, opacity:0.6});
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(barSpan+2, 3), floorMat);
+  floor.rotation.x = -Math.PI/2;
+  floor.position.y = 0;
+  group.add(floor);
+
+  let mouseX=0;
+  function onMouseMove(e){ mouseX=(e.clientX/window.innerWidth)-0.5; }
+  window.addEventListener('mousemove', onMouseMove);
+
+  let dragging=false, lastX=0, lastY=0, dragVelX=0, dragVelY=0;
+  canvas.classList.add('grabbable');
+  function onPointerDown(e){ dragging=true; lastX=e.clientX; lastY=e.clientY; dragVelX=0; dragVelY=0; canvas.classList.add('dragging'); try{canvas.setPointerCapture(e.pointerId);}catch(err){} }
+  function onPointerMove(e){
+    if(!dragging) return;
+    const dx=e.clientX-lastX, dy=e.clientY-lastY;
+    lastX=e.clientX; lastY=e.clientY;
+    dragVelY = dx*0.006; dragVelX = dy*0.006;
+    group.rotation.y += dragVelY;
+    group.rotation.x = Math.max(-0.35, Math.min(0.35, group.rotation.x + dragVelX));
+  }
+  function onPointerUp(){ dragging=false; canvas.classList.remove('dragging'); }
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+
+  function resize(){
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.max(rect.width,1), h = Math.max(rect.height,1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+    renderer.setSize(w,h,false);
+    camera.aspect = w/h;
+    camera.updateProjectionMatrix();
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  function renderLabels(){
+    labelLayer.innerHTML = bars.map(mesh=>{
+      const worldPos = new THREE.Vector3(mesh.userData.x, mesh.userData.targetH + 0.35, 0).applyMatrix4(group.matrixWorld);
+      const p = project3D(worldPos, camera, canvas);
+      if(p.behind) return '';
+      return `<div class="map-label" style="left:${p.x}px; top:${p.y}px;">${escapeHtml(mesh.userData.course.code)}</div>`;
+    }).join('');
+  }
+
+  const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const clock = new THREE.Clock();
+  let raf = null;
+  function tick(){
+    const t = clock.getElapsedTime();
+    // Grow-in animation for the bars: geometry height is a fixed 0.02
+    // (barGeomH below) with scale.y stretching it up to the eased target —
+    // deterministic per frame from elapsed time, so no per-frame state to
+    // track or drift.
+    bars.forEach(mesh=>{
+      const h = Math.max(0.02, mesh.userData.targetH * dt3(t));
+      mesh.scale.y = h/barGeomH;
+      mesh.position.y = h/2;
+    });
+    cubeMeshes.forEach(m=>{ m.rotation.y = Math.sin(t*0.3+m.userData.phase)*0.15; });
+    if(!dragging){ group.rotation.y += 0.0012; }
+    camera.position.x += (mouseX*0.8 - camera.position.x*0.05)*0.02;
+    renderer.render(scene, camera);
+    renderLabels();
+    raf = requestAnimationFrame(tick);
+  }
+  function dt3(t){ return Math.min(1, t/1.2); } // 1.2s ease-in window for the grow animation
+  if(reduceMotion){
+    bars.forEach(mesh=>{ const h=mesh.geometry.parameters.height; mesh.scale.y = Math.max(0.02,mesh.userData.targetH)/h; mesh.position.y = mesh.userData.targetH/2; });
+    renderer.render(scene, camera); renderLabels();
+  } else { tick(); }
+
+  activeView3D = {
+    dispose(){
+      if(raf) cancelAnimationFrame(raf);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('pointerup', onPointerUp);
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointermove', onPointerMove);
+      cubeMeshes.forEach(m=>{ m.geometry.dispose(); m.material.dispose(); });
+      bars.forEach(m=>{ m.geometry.dispose(); m.material.dispose(); });
+      floorMat.dispose(); floor.geometry.dispose();
+      renderer.dispose();
+    }
+  };
+}
+
 /* ============ MAIN RENDER ============ */
+function updateTopNav(route){
+  document.querySelectorAll('.topnav-link').forEach(btn=>{
+    btn.classList.toggle('active', btn.dataset.route === '#/'+route.view);
+  });
+}
 function render(){
   const route = parseHash();
   updateThemeIcon();
   disposeHeroScene();
+  disposeActiveView3D();
   if(route.view==='course'){
     renderCourse(route.course, route.ti);
+  } else if(route.view==='map'){
+    renderMap();
+  } else if(route.view==='campus'){
+    renderCampus();
+  } else if(route.view==='progress'){
+    renderProgress();
   } else {
     renderHome();
     initHeroScene();
   }
+  updateTopNav(route);
   updateOverallStat();
   window.scrollTo(0,0);
 }
