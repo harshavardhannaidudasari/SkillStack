@@ -206,6 +206,35 @@
   }
   .search-box input::placeholder{color:var(--text-faint);}
 
+  /* ---------- Continue Learning (home) ---------- */
+  .continue-section{
+    display:grid; grid-template-columns:1.6fr 1fr; gap:16px; margin-bottom:40px;
+  }
+  .continue-panel{
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+    padding:22px 22px 8px;
+  }
+  .lesson-list{display:flex; flex-direction:column;}
+  .lesson-row{
+    display:flex; align-items:center; gap:14px; padding:14px 4px;
+    border-bottom:1px solid var(--border); text-decoration:none; color:inherit;
+  }
+  .lesson-row:last-child{border-bottom:none;}
+  .lesson-row:hover .lesson-title{color:var(--accent-strong);}
+  .lesson-info{display:flex; flex-direction:column; gap:2px; flex:1; min-width:0;}
+  .lesson-title{font-size:.92rem; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .lesson-sub{font-size:.76rem; color:var(--text-faint);}
+  .lesson-progress{font-size:.76rem; color:var(--text-faint); font-family:'IBM Plex Mono'; flex:none;}
+  .discover-panel{
+    background:linear-gradient(160deg, var(--surface-3), var(--surface));
+    border:1px solid var(--border); border-radius:var(--radius-lg);
+    padding:22px; display:flex; flex-direction:column; gap:10px; align-items:flex-start;
+  }
+  .discover-panel h3{font-size:1.1rem; margin:2px 0 0;}
+  .discover-panel p{font-size:.85rem; color:var(--text-dim); margin:0;}
+  .discover-meta{font-size:.72rem; color:var(--text-faint); margin-bottom:6px;}
+  .discover-panel .btn-primary{margin-top:auto;}
+
   .course-grid{
     display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:16px;
   }
@@ -437,6 +466,7 @@
 
   @media (max-width:880px){
     .hero{grid-template-columns:1fr;}
+    .continue-section{grid-template-columns:1fr;}
     .course-shell{grid-template-columns:1fr;}
     .sidebar{position:static; height:auto; border-right:none; border-bottom:1px solid var(--border);}
     .content-pane{padding:26px 18px 70px;}
@@ -1136,9 +1166,36 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 
+// Up to `limit` topics from courses that are genuinely in progress (some
+// topics done, not all) — each one is the next not-yet-done topic in that
+// course, so clicking it picks up exactly where that course was left off.
+function nextTopicsForContinue(limit){
+  const items = [];
+  for(const c of COURSES){
+    const done = courseDoneCount(c);
+    if(done === 0 || done === c.topics.length) continue;
+    const nextIndex = c.topics.findIndex((_t,i)=>!isDone(c.id,i));
+    if(nextIndex === -1) continue;
+    items.push({course:c, topicIndex:nextIndex, topic:c.topics[nextIndex]});
+  }
+  return items.slice(0, limit);
+}
+// One not-yet-started course, for the "discover something new" panel — no
+// fabricated "+100 people studying this" social proof here, unlike the
+// dashboard this was inspired by: SkillStack has no real user-count data
+// to show, so the panel only states things that are actually true (topic
+// count, category).
+function discoverCourse(){
+  const notStarted = COURSES.filter(c=>courseDoneCount(c) === 0);
+  if(!notStarted.length) return null;
+  return notStarted[Math.floor(Math.random()*notStarted.length)];
+}
+
 function renderHome(){
   const main = document.getElementById('main');
   const done = totalDoneCount();
+  const nextTopics = nextTopicsForContinue(5);
+  const discover = discoverCourse();
   main.innerHTML = `
     <div class="home-wrap">
       <section class="hero">
@@ -1165,6 +1222,41 @@ function renderHome(){
         </div>
       </section>
 
+      ${nextTopics.length || discover ? `
+      <section class="continue-section">
+        <div class="continue-panel">
+          <div class="section-head" style="margin-bottom:14px;">
+            <h2>Your next topics</h2>
+            ${nextTopics.length ? `<a class="clear-filters" href="#/map">View course map &rarr;</a>` : ''}
+          </div>
+          ${nextTopics.length ? `
+          <div class="lesson-list">
+            ${nextTopics.map(({course, topicIndex, topic})=>`
+              <a class="lesson-row" href="#/course/${course.id}/topic/${topicIndex}">
+                <div class="lesson-info">
+                  <span class="lesson-title">${escapeHtml(topic.t)}</span>
+                  <span class="lesson-sub">${escapeHtml(course.name)}</span>
+                </div>
+                <span class="tag" style="--hue:${course.hue}">${escapeHtml(course.code)}</span>
+                <span class="lesson-progress">${courseDoneCount(course)}/${course.topics.length}</span>
+              </a>
+            `).join('')}
+          </div>
+          ` : `<p class="empty-state">Start a course below and it'll show up here.</p>`}
+        </div>
+        ${discover ? `
+        <div class="discover-panel">
+          <span class="eyebrow">Discover something new</span>
+          <span class="badge" style="--hue:${discover.hue}">${discover.code}</span>
+          <h3>${escapeHtml(discover.name)}</h3>
+          <p>${escapeHtml(discover.tagline)}</p>
+          <span class="discover-meta">${discover.topics.length} topics &middot; video + quiz each</span>
+          <button class="btn-primary" id="discoverBtn">Start course</button>
+        </div>
+        ` : ''}
+      </section>
+      ` : ''}
+
       <div class="section-head">
         <h2>Choose a course</h2>
         <div class="search-box">
@@ -1177,6 +1269,8 @@ function renderHome(){
   `;
   renderCourseGrid('');
   document.getElementById('courseSearch').addEventListener('input', e=>renderCourseGrid(e.target.value));
+  const discoverBtn = document.getElementById('discoverBtn');
+  if(discoverBtn) discoverBtn.addEventListener('click', ()=>{ location.hash = `#/course/${discover.id}/topic/0`; });
 }
 
 function renderCourseGrid(filter){
