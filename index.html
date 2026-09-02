@@ -383,6 +383,58 @@
   .map-label.locked{color:var(--text-faint); opacity:.75;}
   .map-label.complete{color:var(--accent-2); border-color:color-mix(in srgb, var(--accent-2) 50%, var(--border));}
 
+  /* ---------- About ---------- */
+  .about-wrap{max-width:1080px; margin:0 auto; padding:0 24px 90px;}
+  .about-hero{
+    position:relative; overflow:hidden; min-height:560px;
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+    padding:60px 8px 40px; text-align:center;
+  }
+  .orbit-rings{position:absolute; top:38%; left:50%; transform:translate(-50%,-50%); z-index:0; pointer-events:none;}
+  .orbit-ring{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); border-radius:50%; border:1px solid var(--border);}
+  .orbit-ring.r1{width:340px; height:340px;}
+  .orbit-ring.r2{width:560px; height:560px; border-color:color-mix(in srgb, var(--border) 70%, transparent);}
+  .orbit-ring.r3{width:800px; height:800px; border-color:color-mix(in srgb, var(--border) 40%, transparent);}
+  .about-hero-copy{position:relative; z-index:1; max-width:640px;}
+  .about-hero-copy h1{font-size:2.4rem; margin:14px 0; line-height:1.15;}
+  .about-hero-copy p{color:var(--text-dim); font-size:1rem;}
+  .persona-cards{
+    position:relative; z-index:1; margin-top:40px; width:100%;
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px;
+  }
+  .persona-card{
+    text-align:left; background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-lg); padding:20px; box-shadow:var(--shadow);
+  }
+  .persona-icon{font-size:1.5rem; display:block; margin-bottom:10px;}
+  .persona-card .tag{display:block; margin-bottom:6px;}
+  .persona-card h3{font-size:1rem; margin-bottom:6px;}
+  .persona-card p{font-size:.84rem; color:var(--text-dim); margin:0;}
+
+  .about-vision, .about-principles{padding:50px 0;}
+  .vision-grid{position:relative; display:grid; grid-template-columns:repeat(3,1fr); gap:20px; padding-top:26px;}
+  .vision-connector{
+    position:absolute; top:0; left:6%; right:6%; height:0;
+    border-top:2px dashed var(--border); z-index:0;
+  }
+  .vision-card{position:relative; z-index:1; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:22px 20px;}
+  .vision-node{position:absolute; top:-27px; left:20px; width:10px; height:10px; border-radius:50%; background:var(--accent-2); box-shadow:0 0 0 4px var(--bg, transparent), 0 0 10px color-mix(in srgb, var(--accent-2) 70%, transparent);}
+  .vision-num{font-family:'Sora'; font-weight:800; font-size:1.6rem; color:var(--text-faint); display:block; margin-bottom:6px;}
+  .vision-card h3{font-size:1.02rem; margin-bottom:8px;}
+  .vision-card p{font-size:.85rem; color:var(--text-dim); margin:0;}
+
+  .principles-list{border-top:1px solid var(--border);}
+  .principle-row{
+    display:grid; grid-template-columns:36px 220px 1fr; align-items:center; gap:18px;
+    padding:20px 4px; border-bottom:1px solid var(--border);
+  }
+  .principle-icon{font-size:1.2rem;}
+  .principle-row h3{font-size:.98rem;}
+  .principle-row p{font-size:.85rem; color:var(--text-dim); margin:0;}
+
+  .about-cta{text-align:center; padding:60px 0 20px;}
+  .about-cta h2{font-size:1.4rem; margin-bottom:20px;}
+
   @media (max-width:880px){
     .hero{grid-template-columns:1fr;}
     .course-shell{grid-template-columns:1fr;}
@@ -390,6 +442,16 @@
     .content-pane{padding:26px 18px 70px;}
     .stage-3d, .stage-3d.tall{height:52vh; min-height:320px;}
     .view-wrap{padding:22px 16px 60px;}
+    .about-wrap{padding:0 16px 60px;}
+    .orbit-ring.r1{width:220px; height:220px;}
+    .orbit-ring.r2{width:340px; height:340px;}
+    .orbit-ring.r3{width:460px; height:460px;}
+    .vision-grid{grid-template-columns:1fr;}
+    .vision-connector{display:none;}
+    .principle-row{grid-template-columns:28px 1fr; grid-template-areas:"icon title" "icon desc"; row-gap:4px;}
+    .principle-icon{grid-area:icon;}
+    .principle-row h3{grid-area:title;}
+    .principle-row p{grid-area:desc;}
   }
   @media (max-width:760px){
     .topnav{margin-left:0; order:3; width:100%; justify-content:flex-start; overflow-x:auto; padding-top:4px;}
@@ -415,6 +477,7 @@
       <button class="topnav-link" data-route="#/map">🗺️ Course Map</button>
       <button class="topnav-link" data-route="#/campus">🏛️ Campus Tour</button>
       <button class="topnav-link" data-route="#/progress">📊 Progress</button>
+      <button class="topnav-link" data-route="#/about">✨ About</button>
     </nav>
     <div class="topbar-spacer"></div>
     <div class="topstat" id="overallStat" title="Topics you've completed across all courses">
@@ -1058,6 +1121,7 @@ function parseHash(){
   if(parts[0]==='map') return {view:'map'};
   if(parts[0]==='campus') return {view:'campus'};
   if(parts[0]==='progress') return {view:'progress'};
+  if(parts[0]==='about') return {view:'about'};
   return {view:'home'};
 }
 window.addEventListener('hashchange', render);
@@ -1927,6 +1991,95 @@ function initProgressScene(){
   };
 }
 
+/* ============ RENDER: ABOUT ============
+   A CSS-only page (no Three.js, no images) — concentric orbit rings behind
+   scattered persona cards, numbered "vision" cards strung along a dashed
+   blueprint-style connector, and a plain values list. No fabricated team
+   members here: the reference this drew inspiration from had named team
+   cards, but SkillStack doesn't have a team, so that section became a
+   "why it works this way" list instead of invented people. */
+const ABOUT_PERSONAS = [
+  ["🎓", "Students", "Build Skills That Show", "Go from tutorials to something you can actually point to — a finished topic, a passed quiz, real progress."],
+  ["💼", "Professionals", "Upskill Without Slowing Down", "Bite-sized topics fit around a job, not the other way around."],
+  ["🔄", "Career Changers", "Break Into A New Field", "Twelve tracks, zero gatekeeping — start wherever your new path begins."],
+  ["🌍", "Self-Learners", "Learn Anything, Your Way", "No sign-up walls, no locked chapters — just pick a course and go."],
+];
+const ABOUT_VISION = [
+  ["01", "Skills Over Certificates", "A quiz you actually pass matters more than a badge you didn't earn."],
+  ["02", "Learn By Doing", "Every topic pairs a short video with a quiz built for exactly that topic — no separate homework."],
+  ["03", "Open To Everyone", "100 topics, 12 tracks, free — no paywall between you and the next skill."],
+];
+const ABOUT_PRINCIPLES = [
+  ["📦", "Bite-Sized Topics", "Big subjects broken into pieces you can actually finish in one sitting."],
+  ["📈", "Progress You Can See", "A progress ring, a course map, a 3D wall of cubes — however you like to track it."],
+  ["🔀", "Any Path, Any Order", "Jump between AI, cybersecurity, and UI/UX. Nothing here is locked behind a prerequisite."],
+  ["🔓", "Built To Stay This Way", "No ads, no upsells, no \"upgrade to unlock\" — just courses."],
+];
+
+function renderAbout(){
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="about-wrap">
+      <section class="about-hero">
+        <div class="orbit-rings" aria-hidden="true">
+          <div class="orbit-ring r1"></div>
+          <div class="orbit-ring r2"></div>
+          <div class="orbit-ring r3"></div>
+        </div>
+        <div class="about-hero-copy">
+          <span class="eyebrow">Why SkillStack exists</span>
+          <h1>Built for how people<br>actually learn.</h1>
+          <p>SkillStack exists to make skill-building feel less like homework and more like progress you can see — one short topic, one quiz, one checkpoint at a time.</p>
+        </div>
+        <div class="persona-cards">
+          ${ABOUT_PERSONAS.map(([icon, tag, title, desc]) => `
+            <div class="persona-card">
+              <span class="persona-icon">${icon}</span>
+              <span class="tag">${escapeHtml(tag)}</span>
+              <h3>${escapeHtml(title)}</h3>
+              <p>${escapeHtml(desc)}</p>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+
+      <section class="about-vision">
+        <div class="section-head"><h2>What we're building toward</h2></div>
+        <div class="vision-grid">
+          <div class="vision-connector" aria-hidden="true"></div>
+          ${ABOUT_VISION.map(([num, title, desc]) => `
+            <div class="vision-card">
+              <span class="vision-node" aria-hidden="true"></span>
+              <span class="vision-num">${num}</span>
+              <h3>${escapeHtml(title)}</h3>
+              <p>${escapeHtml(desc)}</p>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+
+      <section class="about-principles">
+        <div class="section-head"><h2>Why it works this way</h2></div>
+        <div class="principles-list">
+          ${ABOUT_PRINCIPLES.map(([icon, title, desc]) => `
+            <div class="principle-row">
+              <span class="principle-icon">${icon}</span>
+              <h3>${escapeHtml(title)}</h3>
+              <p>${escapeHtml(desc)}</p>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+
+      <section class="about-cta">
+        <h2>Ready to pick up where you left off?</h2>
+        <button class="btn-primary" id="aboutCtaBtn">Browse courses</button>
+      </section>
+    </div>
+  `;
+  document.getElementById('aboutCtaBtn').addEventListener('click', ()=>{ location.hash = '#/'; });
+}
+
 /* ============ MAIN RENDER ============ */
 function updateTopNav(route){
   document.querySelectorAll('.topnav-link').forEach(btn=>{
@@ -1946,6 +2099,8 @@ function render(){
     renderCampus();
   } else if(route.view==='progress'){
     renderProgress();
+  } else if(route.view==='about'){
+    renderAbout();
   } else {
     renderHome();
     initHeroScene();
